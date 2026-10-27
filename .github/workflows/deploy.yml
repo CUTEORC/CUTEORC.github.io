@@ -1,0 +1,47 @@
+name: Deploy portfolio to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify and unpack public website
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, json, pathlib, zipfile
+          manifest = json.loads(pathlib.Path('site-manifest.json').read_text())
+          output = pathlib.Path('_site')
+          output.mkdir()
+          for chunk in manifest['chunks']:
+              assert hashlib.sha256(pathlib.Path(chunk['filename']).read_bytes()).hexdigest() == chunk['sha256']
+          for item in manifest['archives']:
+              archive = pathlib.Path(item['filename'])
+              archive.write_bytes(b''.join(pathlib.Path(name).read_bytes() for name in item['chunks']))
+              assert hashlib.sha256(archive.read_bytes()).hexdigest() == item['sha256']
+              with zipfile.ZipFile(archive) as package:
+                  assert package.testzip() is None
+                  package.extractall(output)
+          for item in manifest['files']:
+              assert hashlib.sha256((output / item['path']).read_bytes()).hexdigest() == item['sha256']
+          print('Verified', len(manifest['files']), 'public files')
+          PYTHON
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
